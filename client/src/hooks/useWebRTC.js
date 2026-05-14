@@ -1,0 +1,145 @@
+import { useRef, useState, useCallback } from "react";
+import { io } from "socket.io-client";
+
+const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || "http://10.96.15.48:3001";
+
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+  ],
+};
+
+export function useWebRTC() {
+  const socketRef = useRef(null);
+  // viewerId -> RTCPeerConnection (el host puede tener varios)
+  const connectionsRef = useRef({});
+  const localStreamRef = useRef(null);
+
+  const [roomId, setRoomId] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [viewers, setViewers] = useState(0);
+  const [status, setStatus] = useState("idle"); // idle | hosting | viewing | ended
+
+  // Conecta el socket una sola vez
+  const getSocket = useCallback(() => {
+    if (!socketRef.current) {
+      socketRef.current = io(SIGNAL_URL);
+    }
+    return socketRef.current;
+  }, []);
+
+  // Crea una RTCPeerConnection ya configurada con todos sus listeners
+  const createPeerConnection = useCallback((viewerId, localStream) => {
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+
+    localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
+
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        getSocket().emit("ice-candidate", { to: viewerId, candidate });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log(`Connection to ${viewerId}:`, pc.connectionState);
+    };
+
+    return pc;
+  }, [getSocket]);
+
+  // HOST: captura pantalla y crea sala
+  const startSharing = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: true,
+    });
+    localStreamRef.current = stream;
+
+    const id = Math.random().toString(36).slice(2, 8).toUpperCase();
+    const socket = getSocket();
+
+    socket.emit("create-room", id);
+    socket.on("room-created", () => {
+      setRoomId(id);
+      setStatus("hosting");
+    });
+
+    // Cuando llega un viewer, el host inicia la oferta
+    socket.on("viewer-joined", async (viewerId) => {
+      setViewers((v) => v + 1);
+      const pc = createPeerConnection(viewerId, stream);
+      connectionsRef.current[viewerId] = pc;
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("offer", { to: viewerId, offer });
+    });
+
+    socket.on("answer", async ({ from, answer }) => {
+      const pc = connectionsRef.current[from];
+      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    });
+
+    socket.on("ice-candidate", async ({ from, candidate }) => {
+      const pc = connectionsRef.current[from];
+      if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    // Si el usuario detiene la captura desde el browser
+    stream.getVideoTracks()[0].onended = stopSharing;
+  }, [getSocket, createPeerConnection]);
+
+  // VIEWER: se une a una sala
+  const joinRoom = useCallback(async (id) => {
+    const socket = getSocket();
+    socket.emit("join-room", id);
+
+    socket.on("error", (msg) => {
+      setStatus("idle");
+      alert(msg);
+    });
+
+    socket.on("offer", async ({ from, offer }) => {
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      connectionsRef.current[from] = pc;
+
+      pc.ontrack = ({ streams }) => {
+        setRemoteStream(streams[0]);
+        setStatus("viewing");
+      };
+
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) socket.emit("ice-candidate", { to: from, candidate });
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit("answer", { to: from, answer });
+    });
+
+    socket.on("ice-candidate", async ({ from, candidate }) => {
+      const pc = connectionsRef.current[from];
+      if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    socket.on("host-disconnected", () => {
+      setRemoteStream(null);
+      setStatus("ended");
+    });
+  }, [getSocket]);
+
+  const stopSharing = useCallback(() => {
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    Object.values(connectionsRef.current).forEach((pc) => pc.close());
+    connectionsRef.current = {};
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    setStatus("idle");
+    setRoomId(null);
+    setViewers(0);
+  }, []);
+
+  return { startSharing, joinRoom, stopSharing, roomId, remoteStream, viewers, status };
+}
