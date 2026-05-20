@@ -1,8 +1,8 @@
-import { useRef, useEffect } from "react";
+import Chat from "./Chat";
 
-export default function ShareRoom({ roomId, viewers, onStop }) {
+export default function ShareRoom({ roomId, viewers, onStop, messages, onSend }) {
   return (
-    <div style={{ textAlign: "center", padding: "2rem" }}>
+    <div style={{ textAlign: "center", padding: "2rem", fontFamily: "sans-serif" }}>
       <h2>Compartiendo pantalla</h2>
       <p>Comparte este código con quien quieras que vea tu pantalla:</p>
       <div style={{
@@ -19,6 +19,7 @@ export default function ShareRoom({ roomId, viewers, onStop }) {
       }}>
         Detener
       </button>
+      <Chat messages={messages} onSend={onSend} />
     </div>
   );
 }
