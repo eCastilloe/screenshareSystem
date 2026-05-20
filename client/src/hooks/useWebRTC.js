@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 
-const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || "http://localhost:3001";
+const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || window.location.origin;
 
 const ICE_SERVERS = {
   iceServers: [
@@ -84,7 +84,9 @@ export function useWebRTC() {
 
     socket.on("answer", async ({ from, answer }) => {
       const pc = connectionsRef.current[from];
-      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      if (pc && pc.signalingState === "have-local-offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      }
     });
 
     socket.on("ice-candidate", async ({ from, candidate }) => {
