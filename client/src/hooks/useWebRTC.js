@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 
-const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || "http://10.96.15.48:3001";
+const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || "http://localhost:3001";
 
 const ICE_SERVERS = {
   iceServers: [
@@ -12,14 +12,15 @@ const ICE_SERVERS = {
 
 export function useWebRTC() {
   const socketRef = useRef(null);
-  // viewerId -> RTCPeerConnection (el host puede tener varios)
   const connectionsRef = useRef({});
   const localStreamRef = useRef(null);
+  const currentRoomIdRef = useRef(null);
 
   const [roomId, setRoomId] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [viewers, setViewers] = useState(0);
-  const [status, setStatus] = useState("idle"); // idle | hosting | viewing | ended
+  const [status, setStatus] = useState("idle");
+  const [messages, setMessages] = useState([]);
 
   // Conecta el socket una sola vez
   const getSocket = useCallback(() => {
@@ -61,8 +62,13 @@ export function useWebRTC() {
 
     socket.emit("create-room", id);
     socket.on("room-created", () => {
+      currentRoomIdRef.current = id;
       setRoomId(id);
       setStatus("hosting");
+    });
+
+    socket.on("chat-message", ({ senderId, text, isHost }) => {
+      setMessages((msgs) => [...msgs, { text, isOwn: senderId === socket.id, isHost }]);
     });
 
     // Cuando llega un viewer, el host inicia la oferta
@@ -93,7 +99,12 @@ export function useWebRTC() {
   // VIEWER: se une a una sala
   const joinRoom = useCallback(async (id) => {
     const socket = getSocket();
+    currentRoomIdRef.current = id;
     socket.emit("join-room", id);
+
+    socket.on("chat-message", ({ senderId, text, isHost }) => {
+      setMessages((msgs) => [...msgs, { text, isOwn: senderId === socket.id, isHost }]);
+    });
 
     socket.on("error", (msg) => {
       setStatus("idle");
@@ -136,10 +147,16 @@ export function useWebRTC() {
     connectionsRef.current = {};
     socketRef.current?.disconnect();
     socketRef.current = null;
+    currentRoomIdRef.current = null;
     setStatus("idle");
     setRoomId(null);
     setViewers(0);
+    setMessages([]);
   }, []);
 
-  return { startSharing, joinRoom, stopSharing, roomId, remoteStream, viewers, status };
+  const sendMessage = useCallback((text) => {
+    getSocket().emit("chat-message", { roomId: currentRoomIdRef.current, text });
+  }, [getSocket]);
+
+  return { startSharing, joinRoom, stopSharing, roomId, remoteStream, viewers, status, messages, sendMessage };
 }

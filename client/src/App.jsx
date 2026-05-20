@@ -5,14 +5,14 @@ import ViewRoom from "./components/ViewRoom";
 
 export default function App() {
   const [inputCode, setInputCode] = useState("");
-  const { startSharing, joinRoom, stopSharing, roomId, remoteStream, viewers, status } = useWebRTC();
+  const { startSharing, joinRoom, stopSharing, roomId, remoteStream, viewers, status, messages, sendMessage } = useWebRTC();
 
   if (status === "hosting") {
-    return <ShareRoom roomId={roomId} viewers={viewers} onStop={stopSharing} />;
+    return <ShareRoom roomId={roomId} viewers={viewers} onStop={stopSharing} messages={messages} onSend={sendMessage} />;
   }
 
   if (status === "viewing" || status === "ended") {
-    return <ViewRoom stream={remoteStream} status={status} />;
+    return <ViewRoom stream={remoteStream} status={status} messages={messages} onSend={sendMessage} />;
   }
 
   return (

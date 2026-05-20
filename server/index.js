@@ -55,6 +55,17 @@ io.on("connection", (socket) => {
     io.to(to).emit("ice-candidate", { from: socket.id, candidate });
   });
 
+  // Chat: retransmite mensajes a todos en la sala
+  socket.on("chat-message", ({ roomId, text }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    io.to(roomId).emit("chat-message", {
+      senderId: socket.id,
+      isHost: room.hostId === socket.id,
+      text,
+    });
+  });
+
   // Limpieza al desconectarse
   socket.on("disconnect", () => {
     rooms.forEach((room, roomId) => {
